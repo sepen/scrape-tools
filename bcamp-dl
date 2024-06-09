@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import time
+import subprocess
+import json
+import random
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+
+from pyvirtualdisplay import Display
+
+album_url = sys.argv[1]
+download_dir= sys.argv[2]
+
+def getChromeDriver():
+    options = webdriver.ChromeOptions()
+
+    options.add_argument('start-maximized')
+    options.add_argument('disable-infobars')
+    options.add_argument('--headless') 
+    options.add_argument('--disable-extensions')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--ignore-certificate-errors')
+    options.add_argument('--log-level=3')
+    options.add_argument('--mute-audio')
+
+    prefs = {'download.default_directory': download_dir}
+    options.add_experimental_option('prefs', prefs)
+
+    options.set_capability('goog:loggingPrefs', {'performance':'ALL'})
+
+    chromedriver = webdriver.Chrome(options=options)
+    #wait = WebDriverWait(Chrome, 5)
+    return chromedriver
+
+
+def main():
+    print('Scraping album from {url}'.format(url=album_url))
+
+    try:
+        display = Display(visible=0, size=(800, 600))
+        display.start()
+
+        driver = getChromeDriver()
+        driver.get(album_url)
+
+        if not os.path.exists(download_dir):
+            os.makedirs(download_dir)
+
+        track_num = 0
+        track_table = driver.find_element(By.XPATH, '//table[@id="track_table"]')
+        for tr in track_table.find_elements(By.XPATH, './/tr'):
+            track_num += 1
+            for track in tr.find_elements(By.CLASS_NAME, 'track-title'):
+                track_title = track.text
+                print('Downloading track {num} - {title}'.format(num=track_num, title=track_title))
+
+                track_link = tr.find_elements(By.CLASS_NAME, 'play_status')[0]
+                track_link.click()
+
+                time.sleep(10)
+
+                logs = driver.get_log('performance')
+                addresses = []
+                for i in logs:
+                    log = json.loads(i['message'])
+                    if log['message']['method'] == 'Network.responseReceived':
+                        if log['message']['params']['response']['mimeType'] == 'audio/mpeg':
+                            addresses.append(log['message']['params']['response']['url'])
+                check = set([i.split('/')[-1] for i in addresses])
+                if len(check) == 1:
+                    track_url = random.choice(addresses)
+                    #print('Media URL {track_url}'.format(track_url=track_url))
+                    subprocess.call("curl --output-dir {dir} -o '{num} - {title}.mp3' -s '{url}'".format(dir=download_dir, num=track_num, title=track_title, url=track_url), shell=True)
+
+    except:
+        print('ERROR Scraping album from {url}'.format(url=album_url))
+        raise
+
+    finally:
+        driver.close()
+        display.stop()
+
+    print('Album successfully generated')
+
+if __name__ == "__main__":
+    main()
